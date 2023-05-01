@@ -1,0 +1,70 @@
+#pragma kernel CSMain
+
+#define RegionCountX 6
+#define RegionCountY 6
+#define ColorResolution 8
+
+Texture2D<float4> InputTexture;
+RWStructuredBuffer<float3> OutputBuffer;
+
+uint TextureWidth;
+uint TextureHeight;
+
+SamplerState samplerPointClamp;
+
+[numthreads(1, 1, 1)]
+void CSMain(uint3 id : SV_DispatchThreadID)
+{
+    uint regionWidth = TextureWidth / RegionCountX;
+    uint regionHeight = TextureHeight / RegionCountY;
+    uint colorStep = 256 / ColorResolution;
+
+    uint colorCounts[ColorResolution * ColorResolution * ColorResolution];
+
+    for (uint i = 0; i < ColorResolution * ColorResolution * ColorResolution; i++)
+        colorCounts[i] = 0;
+
+    for (uint y = id.y * regionHeight; y < (id.y + 1) * regionHeight; y++)
+    {
+        for (uint x = id.x * regionWidth; x < (id.x + 1) * regionWidth; x++)
+        {
+            float2 normalizedCoords = float2(x / (float)TextureWidth, y / (float)TextureHeight);
+            float4 color = InputTexture.SampleLevel(samplerPointClamp, normalizedCoords, 0);
+
+            uint3 quantizedColor;
+            quantizedColor.r = (uint)(color.r * 255) / colorStep;
+            quantizedColor.g = (uint)(color.g * 255) / colorStep;
+            quantizedColor.b = (uint)(color.b * 255) / colorStep;
+
+            uint index = quantizedColor.r + quantizedColor.g * ColorResolution + quantizedColor.b * ColorResolution *
+                ColorResolution;
+            colorCounts[index]++;
+        }
+    }
+
+    uint maxCount = 0;
+    uint3 dominantColor;
+    for (uint r = 0; r < ColorResolution; r++)
+    {
+        for (uint g = 0; g < ColorResolution; g++)
+        {
+            for (uint b = 0; b < ColorResolution; b++)
+            {
+                uint index = r + g * ColorResolution + b * ColorResolution * ColorResolution;
+                uint count = colorCounts[index];
+
+                if (count > maxCount)
+                {
+                    maxCount = count;
+                    dominantColor.r = r * colorStep;
+                    dominantColor.g = g * colorStep;
+                    dominantColor.b = b * colorStep;
+                }
+            }
+        }
+    }
+
+    uint globalIndex = id.y * RegionCountX + id.x;
+    OutputBuffer[globalIndex] = dominantColor / 255.0;
+}
+
